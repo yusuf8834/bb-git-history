@@ -1,9 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-export const REPOSITORY_UNAVAILABLE_ERROR_PREFIX =
-  "GIT_HISTORY_REPOSITORY_UNAVAILABLE:";
-
 export const gitRefSchema = z
   .object({
     fullName: z.string(),

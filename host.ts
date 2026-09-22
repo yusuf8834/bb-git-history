@@ -8,10 +8,8 @@ import type {
   GitFileChange,
   GitRef,
 } from "./contracts";
-import {
-  hostContract,
-  REPOSITORY_UNAVAILABLE_ERROR_PREFIX,
-} from "./contracts";
+import { hostContract } from "./contracts";
+import { REPOSITORY_UNAVAILABLE_ERROR_PREFIX } from "./repository-error";
 import {
   discoverRepositories,
   resolveRepositorySelection,
