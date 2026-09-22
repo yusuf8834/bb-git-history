@@ -27,7 +27,7 @@ import type {
   HistoryPage,
   RepositoryDescriptor,
 } from "./contracts";
-import { REPOSITORY_UNAVAILABLE_ERROR_PREFIX } from "./contracts";
+import { REPOSITORY_UNAVAILABLE_ERROR_PREFIX } from "./repository-error";
 import { layoutCommitGraph, type GraphRow } from "./graph";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";

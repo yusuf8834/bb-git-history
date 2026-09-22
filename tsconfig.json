@@ -26,11 +26,13 @@
     "host.ts",
     "host.test.ts",
     "contracts.ts",
+    "repository-error.ts",
     "graph.ts",
     "graph.test.ts",
     "app.tsx",
     "app.test.tsx",
     "sdk-boundary.test.ts",
+    "frontend-sdk-boundary.test.ts",
     "components",
     "lib",
     "hooks"
