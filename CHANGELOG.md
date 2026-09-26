@@ -2,6 +2,17 @@
 
 All notable changes to Git History are documented here.
 
+## [0.4.2] - 2026-09-26
+
+### Fixed
+
+- Managed Git installs build again: the SDK root entry no longer reaches the
+  frontend bundle (it is a devDependency and is omitted on install).
+
+### Changed
+
+- Support BB 0.44 and later; move to Plugin SDK 0.5.29.
+
 ## [0.4.1] - 2026-09-12
 
 ### Added

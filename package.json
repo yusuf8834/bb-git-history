@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-git-history",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Browse the complete Git history of a project from a bb right panel.",
   "license": "MIT",
   "author": {
@@ -23,8 +23,8 @@
     "check": "npm test && npm run typecheck && npm run build"
   },
   "engines": {
-    "bb": ">=0.39",
-    "bbPluginSdk": ">=0.4.14"
+    "bb": ">=0.44.0",
+    "bbPluginSdk": ">=0.5.29"
   },
   "bb": {
     "name": "Git History",
@@ -45,7 +45,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.4.47",
+    "@get-bb/plugin-sdk": "0.5.29",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
