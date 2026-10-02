@@ -82,9 +82,17 @@ type ValidatedRepository = RepositoryDescriptor & { canonicalPath: string };
 
 type RepositoryDiscovery = {
   environmentRoot: string;
+  /** Directory whose immediate children are repositories; undefined for a root worktree. */
   repositoriesDirectory: string | undefined;
+  /** "repos": children of environmentRoot/repos; "children": children of environmentRoot itself. */
+  layout: "root" | "repos" | "children";
   repositories: ValidatedRepository[];
 };
+
+/** Folders never scanned as repositories when falling back to the root's children. */
+function isSkippedChild(name: string): boolean {
+  return name.startsWith(".") || name === "node_modules";
+}
 
 async function discoverValidatedRepositories(
   environmentPath: string,
@@ -97,6 +105,7 @@ async function discoverValidatedRepositories(
     return {
       environmentRoot,
       repositoriesDirectory: undefined,
+      layout: "root",
       repositories: [
         {
           key: ".",
@@ -109,14 +118,23 @@ async function discoverValidatedRepositories(
 
   let repositoriesDirectory: string;
   let entries: Dirent<string>[];
+  let layout: RepositoryDiscovery["layout"] = "repos";
   try {
     repositoriesDirectory = await realpath(resolve(environmentRoot, "repos"));
     entries = await readdir(repositoriesDirectory, { withFileTypes: true });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { environmentRoot, repositoriesDirectory: undefined, repositories: [] };
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // No repos/ directory: a workspace that simply holds several checkouts side by
+    // side (e.g. a plugins folder). Its immediate, non-hidden children are candidates.
+    layout = "children";
+    repositoriesDirectory = environmentRoot;
+    try {
+      entries = (await readdir(environmentRoot, { withFileTypes: true })).filter(
+        (entry) => !isSkippedChild(entry.name),
+      );
+    } catch {
+      return { environmentRoot, repositoriesDirectory: undefined, layout: "root", repositories: [] };
     }
-    throw error;
   }
 
   const discovered = new Map<string, ValidatedRepository>();
@@ -143,6 +161,7 @@ async function discoverValidatedRepositories(
   return {
     environmentRoot,
     repositoriesDirectory,
+    layout,
     repositories: [...discovered.values()].sort((left, right) =>
       left.key < right.key
         ? -1
@@ -222,8 +241,12 @@ async function revalidateSelection(
       throw new Error("candidate changed");
     }
 
-    if (discovery.repositoriesDirectory === undefined) {
+    if (discovery.layout === "root" || discovery.repositoriesDirectory === undefined) {
       if (candidate !== environmentRoot) throw new Error("root repository changed");
+    } else if (discovery.layout === "children") {
+      if (dirname(candidate) !== environmentRoot || candidate === environmentRoot) {
+        throw new Error("repository directory changed");
+      }
     } else {
       const repositoriesDirectory = await realpath(resolve(environmentRoot, "repos"));
       if (

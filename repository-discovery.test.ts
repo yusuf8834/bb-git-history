@@ -128,6 +128,34 @@ describe("discoverRepositories", () => {
   });
 });
 
+describe("discoverRepositories without a repos directory", () => {
+  it("falls back to immediate non-hidden child repositories", async () => {
+    const root = await createRoot();
+    await createRepository(join(root, "bb-plugin-a"));
+    await createRepository(join(root, "bb-plugin-b"));
+    await createRepository(join(root, ".hidden"));
+    await createRepository(join(root, "node_modules"));
+    await mkdir(join(root, "docs"), { recursive: true });
+    await createRepository(join(root, "group", "nested"));
+
+    const signal = new AbortController().signal;
+    const result = await discoverRepositories(root, signal, runGit);
+
+    expect(result.map((repository) => repository.key)).toEqual(["bb-plugin-a", "bb-plugin-b"]);
+    await expect(resolveRepositorySelection(root, "bb-plugin-b", signal, runGit)).resolves.toBe(
+      await realpath(join(root, "bb-plugin-b")),
+    );
+    await expect(resolveRepositorySelection(root, "group/nested", signal, runGit)).rejects.toThrow();
+  });
+
+  it("keeps an empty result for a workspace with neither repos nor child repositories", async () => {
+    const root = await createRoot();
+    await mkdir(join(root, "docs"), { recursive: true });
+
+    expect(await discoverRepositories(root, new AbortController().signal, runGit)).toEqual([]);
+  });
+});
+
 describe("resolveRepositorySelection", () => {
   it("accepts an exact discovered key and returns its canonical path", async () => {
     const root = await createRoot();
