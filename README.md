@@ -66,8 +66,12 @@ workspace/                 # Thread environment root, without its own .git
       .git
 ```
 
-The `.git` entry may be a directory or a worktree's `.git` file. Repositories
-directly under `workspace/`, such as `workspace/project-a/`, and deeper paths,
+When the environment root is not a Git worktree and has no `repos/` directory,
+Git History falls back to the root's immediate, non-hidden child folders that
+are Git worktrees (for example `workspace/project-a/`); `node_modules` and dot
+folders are skipped. A `repos/` directory, when present, still takes precedence.
+
+The `.git` entry may be a directory or a worktree's `.git` file. Deeper paths,
 such as `workspace/repos/group/project-a/`, are not discovered. If `workspace/`
 is itself a Git worktree, only that root repository is shown.
 

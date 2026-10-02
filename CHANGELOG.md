@@ -2,6 +2,15 @@
 
 All notable changes to Git History are documented here.
 
+## [0.4.3] - 2026-10-02
+
+### Added
+
+- Discover repositories among the environment root's immediate child folders
+  when the root is not a Git worktree and has no `repos/` directory (e.g. a
+  workspace holding several plugin checkouts side by side). Dot folders and
+  `node_modules` are skipped; `repos/` still takes precedence.
+
 ## [0.4.2] - 2026-09-26
 
 ### Fixed

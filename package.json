@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-git-history",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Browse the complete Git history of a project from a bb right panel.",
   "license": "MIT",
   "author": {
