@@ -94,6 +94,11 @@ npm run build
 The host entry runs Git on the thread environment's bb host. This keeps the
 same behavior for local worktrees and repositories on connected machines.
 
+## Contributing
+
+Contributor lists are for people only. Do not list AI tools, models, or agents
+as contributors or add `Co-authored-by` commit trailers crediting them.
+
 ## License
 
 [MIT](LICENSE)
