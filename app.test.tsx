@@ -6,10 +6,22 @@ import {
   renderSlot,
   type CapturedPluginApp,
 } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { CommitDetails, HistoryPage, RepositoryDescriptor } from "./contracts";
-import type { rpcContract } from "./server";
+import type {
+  BbNavigate,
+  ExperimentalPanelController,
+  ExperimentalTabRegistration,
+  ExperimentalThreadTabProps,
+  JsonValue,
+  PluginBrowserBbSdk,
+} from "@get-bb/plugin-sdk/app";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  rpcContract,
+  threadHistoryTag,
+  type CommitDetails,
+  type HistoryPage,
+  type RepositoryDescriptor,
+} from "./contracts";
 
 const hash = "1234567890abcdef1234567890abcdef12345678";
 const parentHash = "abcdef1234567890abcdef1234567890abcdef12";
@@ -106,7 +118,23 @@ function deferred<T>() {
   return { promise, resolve: resolve! };
 }
 
+type HistoryTabProps = ExperimentalThreadTabProps & { params: JsonValue | null };
+
 let app: CapturedPluginApp;
+
+type HistoryTabRegistration = Extract<
+  ExperimentalTabRegistration,
+  { context: { kind: "thread" }; availability: "action" }
+>;
+
+function historyTab(): { component: HistoryTabRegistration["component"] } {
+  const tab = app.tabs.find(
+    (candidate): candidate is HistoryTabRegistration =>
+      candidate.context.kind === "thread" && candidate.availability === "action",
+  );
+  if (tab === undefined) throw new Error("Git History must register a thread action tab");
+  return { component: tab.component };
+}
 
 beforeAll(async () => {
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
@@ -125,35 +153,38 @@ beforeEach(() => {
 });
 
 describe("Git history app", () => {
-  it("registers the history panel and opt-in header action", () => {
-    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["history"]);
-    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["git-history"]);
-
-    const header = renderSlot(
-      app.threadHeaderActions[0]!,
-      { threadId: "thread-1", projectId: "project-1", isCompactViewport: false },
-      {
-        settings: { showHeaderShortcut: true },
-        openThreadPanel: () => true,
-      },
-    );
-
-    fireEvent.click(header.getByRole("button", { name: "Open Git history" }));
-    expect(header.inspection.navigateCalls).toEqual([
-      {
-        method: "openThreadPanel",
-        options: { actionId: "history", title: "Git History" },
-      },
+  it("registers the history tab and opt-in header action", () => {
+    expect(app.tabs.map((tab) => [tab.id, tab.context, tab.availability])).toEqual([
+      ["history", { kind: "thread" }, "action"],
     ]);
-    header.lifecycle.unmount();
+    const headerAction = app.threadActions.find((action) => action.id === "git-history")!;
+    expect(headerAction.placement).toBe("header");
+
+    const openTab = vi.fn<ExperimentalPanelController["openTab"]>(() => true);
+    const input = {
+      thread: { id: "thread-1" } as Parameters<typeof headerAction.item>[0]["thread"],
+      sdk: {} as PluginBrowserBbSdk,
+      navigate: {} as BbNavigate,
+      experimental_panel: { openTab } as unknown as ExperimentalPanelController,
+    };
+    expect(headerAction.item({ ...input, data: false })).toBeNull();
+
+    const action = headerAction.item({ ...input, data: true });
+    expect(action?.label).toBe("Git History");
+    void action?.run({ requestRename: () => undefined });
+    expect(openTab).toHaveBeenCalledWith({
+      tab: { id: "history", context: { kind: "thread" }, availability: "action" },
+      title: "Git History",
+    });
   });
 
   it("renders default experimental lanes and expanded commit details", async () => {
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: rpcHandlers(),
       },
     );
@@ -176,10 +207,10 @@ describe("Git history app", () => {
   });
 
   it("keeps the native repository selector hidden for one repository", async () => {
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
-      { settings: {}, rpc: rpcHandlers() },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
+      { settings: {}, experimental_rpcContract: rpcContract, rpc: rpcHandlers() },
     );
 
     await panel.findByText("example-repo / main");
@@ -201,11 +232,12 @@ describe("Git history app", () => {
       { key: "repos/api", name: "API", currentBranch: "main", dirtyCount: 0 },
       { key: "repos/web", name: "Web", currentBranch: "feature/ui", dirtyCount: 1 },
     ];
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({ repositories, unavailableReason: null }),
@@ -280,6 +312,7 @@ describe("Git history app", () => {
     ];
     const options = {
       settings: {},
+      experimental_rpcContract: rpcContract,
       rpc: {
         ...rpcHandlers(),
         repositories: async () => ({ repositories, unavailableReason: null }),
@@ -287,9 +320,9 @@ describe("Git history app", () => {
           historyFor(repositoryKey ?? "repos/api"),
       },
     };
-    const firstPanel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "remembered-thread", params: null },
+    const firstPanel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "remembered-thread", environment: null, params: null },
       options,
     );
 
@@ -297,9 +330,9 @@ describe("Git history app", () => {
     await firstPanel.findByRole("button", { name: /^Web history/ });
     firstPanel.lifecycle.unmount();
 
-    const reopenedPanel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "remembered-thread", params: null },
+    const reopenedPanel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "remembered-thread", environment: null, params: null },
       options,
     );
     await reopenedPanel.findByRole("button", { name: /^Web history/ });
@@ -315,11 +348,12 @@ describe("Git history app", () => {
       currentBranch: "main",
       dirtyCount: index,
     }));
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "large-thread", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "large-thread", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({ repositories, unavailableReason: null }),
@@ -348,11 +382,12 @@ describe("Git history app", () => {
       currentBranch: "main",
       dirtyCount: 0,
     }));
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "shrinking-thread", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "shrinking-thread", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({ repositories, unavailableReason: null }),
@@ -383,11 +418,12 @@ describe("Git history app", () => {
 
   it("does not render a late previous-repository history response after switching", async () => {
     const apiHistory = deferred<HistoryPage>();
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({
@@ -417,11 +453,12 @@ describe("Git history app", () => {
 
   it("requires a new selection when the selected repository disappears on refresh", async () => {
     let discoveryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => {
@@ -444,69 +481,68 @@ describe("Git history app", () => {
 
     fireEvent.click(await panel.findByRole("button", { name: "Show Web history" }));
     await panel.findByRole("button", { name: /^Web history/ });
-    const historyCallsBeforeRefresh = panel.inspection.rpcCalls.filter((call) => call.method === "history");
     fireEvent.click(panel.getByRole("button", { name: "Refresh Git history" }));
 
     await panel.findByText("The selected repository is no longer available.");
     expect(panel.queryByRole("button", { name: /^Web history/ })).toBeNull();
-    expect(panel.inspection.rpcCalls.filter((call) => call.method === "history"))
-      .toHaveLength(historyCallsBeforeRefresh.length);
     fireEvent.click(panel.getByRole("button", { name: "Show API history" }));
     await panel.findByRole("button", { name: /^API history/ });
     panel.lifecycle.unmount();
   });
 
-  it("completes an explicit refresh when an overlapping poll discovery supersedes it", async () => {
-    const explicitDiscovery = deferred<{
-      repositories: RepositoryDescriptor[];
-      unavailableReason: null;
-    }>();
-    let repositoryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+  it("reloads history only when an invalidation reports a new revision", async () => {
+    let revision = "revision-1";
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
-          repositories: async () => {
-            repositoryCalls += 1;
-            if (repositoryCalls === 2) return explicitDiscovery.promise;
-            return {
-              repositories: [{ key: "repos/api", name: "API" }],
-              unavailableReason: null,
-            };
-          },
+          history: async () => ({
+            ...historyPage,
+            revision,
+            commits: historyPage.commits.map((commit) => ({
+              ...commit,
+              subject: `subject at ${revision}`,
+            })),
+          }),
+          historyRevision: async () => ({ revision, unavailableReason: null }),
         },
       },
     );
+    const historyCalls = () =>
+      panel.inspection.rpcCalls.filter((call) => call.method === "history").length;
+    const revisionCalls = () =>
+      panel.inspection.rpcCalls.filter((call) => call.method === "historyRevision").length;
 
-    await panel.findByText("example-repo / main");
-    const historyCallsBeforeRefresh = panel.inspection.rpcCalls.filter((call) => call.method === "history");
-    fireEvent.click(panel.getByRole("button", { name: "Refresh Git history" }));
-    await waitFor(() => expect(repositoryCalls).toBe(2));
+    await panel.findByRole("button", { name: /subject at revision-1/ });
+    await waitFor(() => expect(revisionCalls()).toBe(1));
+    const loadsBeforeInvalidation = historyCalls();
 
-    document.dispatchEvent(new Event("visibilitychange"));
-    expect(repositoryCalls).toBe(2);
-    explicitDiscovery.resolve({
-      repositories: [{ key: "repos/api", name: "API" }],
-      unavailableReason: null,
-    });
+    await panel.experimental_invalidateRpc([threadHistoryTag("thread-1")]);
+    await waitFor(() => expect(revisionCalls()).toBe(2));
+    expect(historyCalls()).toBe(loadsBeforeInvalidation);
 
-    await waitFor(() => {
-      expect(panel.inspection.rpcCalls.filter((call) => call.method === "history"))
-        .toHaveLength(historyCallsBeforeRefresh.length + 1);
-    });
+    revision = "revision-2";
+    await panel.experimental_invalidateRpc([threadHistoryTag("thread-1")]);
+    await panel.findByRole("button", { name: /subject at revision-2/ });
+    expect(historyCalls()).toBe(loadsBeforeInvalidation + 1);
+
+    await panel.experimental_invalidateRpc([threadHistoryTag("other-thread")]);
+    expect(revisionCalls()).toBe(3);
     panel.lifecycle.unmount();
   });
 
   it("keeps the selected repository mounted through a transient discovery failure and retries", async () => {
     let discoveryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => {
@@ -522,11 +558,11 @@ describe("Git history app", () => {
     );
 
     await panel.findByText("example-repo / main");
-    document.dispatchEvent(new Event("visibilitychange"));
+    await panel.experimental_invalidateRpc([threadHistoryTag("thread-1")]);
     await waitFor(() => expect(discoveryCalls).toBe(2));
     expect(panel.getByText("example-repo / main")).toBeTruthy();
 
-    document.dispatchEvent(new Event("visibilitychange"));
+    await panel.experimental_invalidateRpc([threadHistoryTag("thread-1")]);
     await waitFor(() => expect(discoveryCalls).toBe(3));
     expect(panel.getByText("example-repo / main")).toBeTruthy();
     panel.lifecycle.unmount();
@@ -534,11 +570,12 @@ describe("Git history app", () => {
 
   it("rediscovers repositories when commit details report an unavailable selection", async () => {
     let discoveryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({
@@ -562,11 +599,12 @@ describe("Git history app", () => {
 
   it("rediscovers repositories when an open commit patch reports an unavailable selection", async () => {
     let discoveryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({
@@ -593,11 +631,12 @@ describe("Git history app", () => {
 
   it("rediscovers repositories when an open working patch reports an unavailable selection", async () => {
     let discoveryCalls = 0;
-    const panel = renderSlot<PluginThreadPanelProps, typeof rpcContract>(
-      app.threadPanelActions[0]!,
-      { threadId: "thread-1", params: null },
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
       {
         settings: {},
+        experimental_rpcContract: rpcContract,
         rpc: {
           ...rpcHandlers(),
           repositories: async () => ({

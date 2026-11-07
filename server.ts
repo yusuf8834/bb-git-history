@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { hostContract, rpcContract } from "./contracts";
+import { hostContract, rpcContract, threadHistoryTag } from "./contracts";
+import { createRefreshScheduler } from "./refresh-scheduler";
 
 export { rpcContract } from "./contracts";
 
@@ -19,6 +20,15 @@ function repositoryInput(
     ...(repositoryKey === undefined ? {} : { repositoryKey }),
   };
 }
+
+const URGENT_ENVIRONMENT_CHANGES = new Set<string>([
+  "git-refs-changed",
+  "git-branches-changed",
+  "metadata-changed",
+  "status-changed",
+  "environment-created",
+  "environment-deleted",
+]);
 
 async function repositoryForThread(
   bb: BbPluginApi,
@@ -49,6 +59,87 @@ async function repositoryForThread(
 
 export default function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract });
+  const watchedThreads = new Map<string, number>();
+  const threadEnvironments = new Map<string, string | null>();
+  const refreshes = createRefreshScheduler((threadId) => {
+    bb.rpc.experimental_invalidate([threadHistoryTag(threadId)]);
+  });
+  let stopEvents: (() => void) | null = null;
+
+  function subscribeToChanges(): () => void {
+    const stopThreads = bb.sdk.subscribe({
+      event: "thread:changed",
+      callback: (event) => {
+        const threadId = event.id;
+        if (threadId === undefined || !watchedThreads.has(threadId)) return;
+        if (event.changes.includes("environment-changed")) {
+          void loadThreadEnvironment(threadId);
+          refreshes.request(threadId, "urgent");
+          return;
+        }
+        const status = event.metadata?.statusChange?.status;
+        if (
+          event.changes.includes("status-changed")
+          && (status === "idle" || status === "error")
+        ) {
+          refreshes.request(threadId, "urgent");
+        }
+      },
+    });
+    const stopEnvironments = bb.sdk.subscribe({
+      event: "environment:changed",
+      callback: (event) => {
+        if (event.id === undefined) return;
+        const urgency = event.changes.some((change) => URGENT_ENVIRONMENT_CHANGES.has(change))
+          ? "urgent"
+          : "work-status";
+        for (const [threadId, environmentId] of threadEnvironments) {
+          if (environmentId === event.id && watchedThreads.has(threadId)) {
+            refreshes.request(threadId, urgency);
+          }
+        }
+      },
+    });
+    return () => {
+      stopThreads();
+      stopEnvironments();
+    };
+  }
+
+  async function loadThreadEnvironment(threadId: string): Promise<void> {
+    try {
+      const thread = await bb.sdk.threads.get({ threadId });
+      if (watchedThreads.has(threadId)) {
+        threadEnvironments.set(threadId, thread.environmentId);
+      }
+    } catch {
+      threadEnvironments.delete(threadId);
+    }
+  }
+
+  function watchThread(threadId: string, signal: AbortSignal): void {
+    const watchers = watchedThreads.get(threadId) ?? 0;
+    watchedThreads.set(threadId, watchers + 1);
+    stopEvents ??= subscribeToChanges();
+    if (watchers === 0) void loadThreadEnvironment(threadId);
+    signal.addEventListener(
+      "abort",
+      () => {
+        const remaining = (watchedThreads.get(threadId) ?? 1) - 1;
+        if (remaining > 0) {
+          watchedThreads.set(threadId, remaining);
+          return;
+        }
+        watchedThreads.delete(threadId);
+        threadEnvironments.delete(threadId);
+        refreshes.forget(threadId);
+        if (watchedThreads.size > 0) return;
+        stopEvents?.();
+        stopEvents = null;
+      },
+      { once: true },
+    );
+  }
 
   bb.settings.define({
     showHeaderShortcut: {
@@ -151,6 +242,22 @@ export default function plugin(bb: BbPluginApi) {
         { hostId: target.hostId },
       );
     },
+  });
+
+  for (const method of ["repositories", "historyRevision"] as const) {
+    bb.rpc.experimental_whileWatched(method, (read, signal) => {
+      if (!("input" in read)) return;
+      const parsed = rpcContract[method].input.safeParse(read.input);
+      if (parsed.success) watchThread(parsed.data.threadId, signal);
+    });
+  }
+
+  bb.onDispose(() => {
+    stopEvents?.();
+    stopEvents = null;
+    watchedThreads.clear();
+    threadEnvironments.clear();
+    refreshes.dispose();
   });
 
   bb.log.info("Git History loaded");

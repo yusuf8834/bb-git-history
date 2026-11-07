@@ -24,7 +24,7 @@ bb plugin install .
 
 Open a project thread and select Git History from the right panel's Actions
 list. Enable **Show thread header shortcut** in the plugin settings if you also
-want a Git folder button beside the editor controls.
+want a Git History action in the thread header.
 
 ## What it shows
 

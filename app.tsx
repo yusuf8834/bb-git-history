@@ -11,13 +11,14 @@ import {
 import {
   definePluginApp,
   experimental_Diff as Diff,
-  useBbNavigate,
+  experimental_useRpcQuery as useRpcQuery,
   useRpc,
   useSettings,
+  type PluginThreadActionRegistration,
 } from "@get-bb/plugin-sdk/app";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import type { rpcContract } from "./server";
+import { rpcContract } from "./contracts";
 import type {
   CommitDetails,
   CommitPatch,
@@ -37,7 +38,6 @@ import { visibleRefPillCount } from "./ref-layout";
 import "./app.css";
 
 const PAGE_SIZE = 200;
-const AUTO_REFRESH_INTERVAL_MS = 15_000;
 const COMMIT_ROW_HEIGHT = 31;
 const DATE_HEADER_HEIGHT = 24;
 const UNCOMMITTED_HEADER_HEIGHT = 28;
@@ -1143,73 +1143,60 @@ function RepositoryNavigator({
   );
 }
 
+const NO_REPOSITORIES: RepositoryDescriptor[] = [];
+
 function GitHistoryPanel({ threadId }: { threadId: string }) {
-  const rpc = useRpc<typeof rpcContract>();
-  const [repositories, setRepositories] = useState<RepositoryDescriptor[]>([]);
-  const [repositoryKey, setRepositoryKey] = useState<string | null>(null);
-  const [discoveryLoading, setDiscoveryLoading] = useState(true);
-  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
-  const discoverySequence = useRef(0);
-  const discoveryRequest = useRef<{
+  const discovery = useRpcQuery({
+    contract: rpcContract,
+    method: "repositories",
+    input: { threadId },
+  });
+  const repositories = discovery.data?.repositories ?? NO_REPOSITORIES;
+  const discoveryLoading = discovery.isLoading;
+  const discoveryError = discovery.data
+    ? discovery.data.unavailableReason
+    : discovery.error?.message ?? null;
+  const [selection, setSelection] = useState<{
     threadId: string;
-    promise: Promise<RepositoryDescriptor[]>;
+    repositoryKey: string | null;
   } | null>(null);
-  const hasDiscoveredRepositories = useRef(false);
-
-  const refreshRepositories = useCallback((): Promise<RepositoryDescriptor[]> => {
-    if (discoveryRequest.current?.threadId === threadId) {
-      return discoveryRequest.current.promise;
-    }
-
-    const sequence = ++discoverySequence.current;
-    const request = (async (): Promise<RepositoryDescriptor[]> => {
-      setDiscoveryLoading(true);
-      try {
-        const result = await rpc.call("repositories", { threadId });
-        if (sequence !== discoverySequence.current) return [];
-        const isInitialDiscovery = !hasDiscoveredRepositories.current;
-        hasDiscoveredRepositories.current = true;
-        setRepositories(result.repositories);
-        setDiscoveryError(result.unavailableReason);
-        setRepositoryKey((current) => {
-          if (isInitialDiscovery) {
-            const remembered = rememberedRepository(threadId);
-            return result.repositories.find((repository) => repository.key === remembered)?.key
-              ?? result.repositories[0]?.key
-              ?? null;
-          }
-          if (current && result.repositories.some((repository) => repository.key === current)) {
-            return current;
-          }
-          rememberRepository(threadId, null);
-          return null;
-        });
-        return result.repositories;
-      } catch (error) {
-        if (sequence === discoverySequence.current) {
-          if (!hasDiscoveredRepositories.current) {
-            setDiscoveryError(errorMessage(error));
-          }
-        }
-        return [];
-      } finally {
-        if (sequence === discoverySequence.current) setDiscoveryLoading(false);
-      }
-    })();
-    discoveryRequest.current = { threadId, promise: request };
-    void request.finally(() => {
-      if (discoveryRequest.current?.promise === request) {
-        discoveryRequest.current = null;
-      }
-    });
-    return request;
-  }, [rpc, threadId]);
+  const repositoryKey = selection?.threadId === threadId ? selection.repositoryKey : null;
 
   useEffect(() => {
-    hasDiscoveredRepositories.current = false;
-    setRepositoryKey(null);
-    void refreshRepositories();
-  }, [refreshRepositories]);
+    const discovered = discovery.data?.repositories;
+    if (discovered === undefined) return;
+    setSelection((current) => {
+      if (current?.threadId !== threadId) {
+        const remembered = rememberedRepository(threadId);
+        return {
+          threadId,
+          repositoryKey: discovered.find((repository) => repository.key === remembered)?.key
+            ?? discovered[0]?.key
+            ?? null,
+        };
+      }
+      if (
+        current.repositoryKey
+        && discovered.some((repository) => repository.key === current.repositoryKey)
+      ) {
+        return current;
+      }
+      rememberRepository(threadId, null);
+      return { threadId, repositoryKey: null };
+    });
+  }, [discovery.data, threadId]);
+
+  const latestRefetchRepositories = useRef(discovery.refetch);
+  useLayoutEffect(() => {
+    latestRefetchRepositories.current = discovery.refetch;
+  });
+  const repositoryRefresh = useRef<Promise<void> | null>(null);
+  const refreshRepositories = useCallback(() => {
+    repositoryRefresh.current ??= latestRefetchRepositories.current().finally(() => {
+      repositoryRefresh.current = null;
+    });
+    return repositoryRefresh.current;
+  }, []);
 
   const recoverRepository = useCallback(() => {
     void refreshRepositories();
@@ -1217,7 +1204,7 @@ function GitHistoryPanel({ threadId }: { threadId: string }) {
 
   const selectRepository = useCallback((key: string) => {
     rememberRepository(threadId, key);
-    setRepositoryKey(key);
+    setSelection({ threadId, repositoryKey: key });
   }, [threadId]);
 
   const repositoryNavigator = (
@@ -1282,7 +1269,7 @@ function RepositoryHistoryPanel({
 }: {
   threadId: string;
   repositoryKey: string;
-  onRefreshRepositories: () => Promise<RepositoryDescriptor[]>;
+  onRefreshRepositories: () => Promise<void>;
   onRepositoryUnavailable: () => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
@@ -1382,11 +1369,8 @@ function RepositoryHistoryPanel({
   );
 
   const refreshHistory = useCallback(async () => {
-    const discoveredRepositories = await onRefreshRepositories();
-    if (discoveredRepositories.some((repository) => repository.key === repositoryKey)) {
-      await loadHistory(true);
-    }
-  }, [loadHistory, onRefreshRepositories, repositoryKey]);
+    await Promise.all([onRefreshRepositories(), loadHistory(true)]);
+  }, [loadHistory, onRefreshRepositories]);
 
   useLayoutEffect(() => {
     if (pendingScrollRestore.current === null || !scrollRef.current) return;
@@ -1404,73 +1388,46 @@ function RepositoryHistoryPanel({
     void loadHistory(true);
   }, [repositoryKey, threadId]);
 
+  const liveRevision = useRpcQuery({
+    contract: rpcContract,
+    method: "historyRevision",
+    input: { threadId, repositoryKey },
+    enabled: page !== null,
+  }).data;
+  const reloadedForRevision = useRef<string | null>(null);
+
   useEffect(() => {
-    if (initialLoading) return;
-
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const schedule = (delay = AUTO_REFRESH_INTERVAL_MS) => {
-      timeoutId = setTimeout(() => {
-        void tick();
-      }, delay);
-    };
-
-    const tick = async () => {
-      if (cancelled) return;
-      if (document.hidden || diffView !== null) {
-        schedule();
-        return;
-      }
-
-      try {
-        const discoveredRepositories = await onRefreshRepositories();
-        if (!discoveredRepositories.some((repository) => repository.key === repositoryKey)) {
-          schedule();
-          return;
-        }
-        const result = await rpc.call("historyRevision", { threadId, repositoryKey });
-        if (cancelled) return;
-        if (result.unavailableReason) {
-          schedule();
-          return;
-        }
-
-        const previousRevision = historyRevisionRef.current;
-        if (previousRevision !== null && result.revision !== previousRevision) {
-          await loadHistory(true, { silent: true });
-        } else if (previousRevision === null) {
-          historyRevisionRef.current = result.revision;
-        }
-      } catch {
-        // Ignore transient poll failures.
-      }
-
-      schedule();
-    };
-
-    const onVisibilityChange = () => {
-      if (!document.hidden && diffView === null) {
-        clearTimeout(timeoutId);
-        void tick();
-      }
-    };
-
-    schedule();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timeoutId);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [diffView, initialLoading, loadHistory, onRefreshRepositories, repositoryKey, rpc, threadId]);
+    if (!liveRevision || liveRevision.unavailableReason || diffView !== null) return;
+    if (historyRevisionRef.current === null) {
+      historyRevisionRef.current = liveRevision.revision;
+      return;
+    }
+    if (
+      liveRevision.revision === historyRevisionRef.current
+      || liveRevision.revision === reloadedForRevision.current
+    ) {
+      return;
+    }
+    reloadedForRevision.current = liveRevision.revision;
+    void loadHistory(true, { silent: true });
+  }, [diffView, liveRevision, loadHistory]);
 
   useEffect(() => {
     if (expandedHash && !commits.some((commit) => commit.hash === expandedHash)) {
       setExpandedHash(null);
     }
   }, [commits, expandedHash]);
+
+  const diffSource = useMemo(() => {
+    if (diffView === null) return null;
+    return diffView.kind === "commit"
+      ? {
+        kind: "commit" as const,
+        hash: diffView.commit.hash,
+        label: `${diffView.commit.subject} · ${diffView.commit.hash.slice(0, 7)}`,
+      }
+      : { kind: "working-tree" as const, label: "Uncommitted changes" };
+  }, [diffView]);
 
   const matchingCount = useMemo(
     () => commits.filter((commit) => commitMatches(commit, query)).length,
@@ -1590,18 +1547,12 @@ function RepositoryHistoryPanel({
         </div>
       )}
       </div>
-      {diffView && (
+      {diffView && diffSource && (
         <FileDiffPanel
           key={diffView.kind === "commit" ? diffView.commit.hash : "working-tree"}
           threadId={threadId}
           repositoryKey={repositoryKey}
-          source={diffView.kind === "commit"
-            ? {
-              kind: "commit",
-              hash: diffView.commit.hash,
-              label: `${diffView.commit.subject} · ${diffView.commit.hash.slice(0, 7)}`,
-            }
-            : { kind: "working-tree", label: "Uncommitted changes" }}
+          source={diffSource}
           files={diffView.kind === "commit" ? diffView.details.files : diffView.files}
           initialPath={diffView.path}
           onBack={() => setDiffView(null)}
@@ -1612,42 +1563,47 @@ function RepositoryHistoryPanel({
   );
 }
 
-function GitHistoryHeaderAction({ threadId }: { threadId: string }) {
-  const navigate = useBbNavigate();
-  const { values } = useSettings();
-  if (values?.showHeaderShortcut !== true) return null;
+const HISTORY_TAB = {
+  id: "history",
+  context: { kind: "thread" },
+  availability: "action",
+} as const;
 
-  return (
-    <button
-      className="git-header-action"
-      aria-label="Open Git history"
-      title="Open Git history"
-      onClick={() => {
-        const opened = navigate.openThreadPanel({
-          actionId: "history",
+function useShowHeaderShortcut(): boolean {
+  return useSettings().values?.showHeaderShortcut === true;
+}
+
+export const gitHistoryHeaderAction: PluginThreadActionRegistration<boolean> = {
+  id: "git-history",
+  title: "Git History",
+  icon: "FolderGit",
+  group: "git-history",
+  placement: "header",
+  useData: useShowHeaderShortcut,
+  item: ({ data: showHeaderShortcut, experimental_panel }) => {
+    if (!showHeaderShortcut) return null;
+    return {
+      label: "Git History",
+      icon: "FolderGit",
+      run: () => {
+        const opened = experimental_panel.openTab({
+          tab: HISTORY_TAB,
           title: "Git History",
         });
         if (!opened) toast.error("Git History could not open on this panel.");
-      }}
-      data-thread-id={threadId}
-    >
-      <Icon name="FolderGit" aria-hidden="true" />
-    </button>
-  );
-}
+      },
+    };
+  },
+};
 
 export default definePluginApp((app) => {
-  app.slots.threadPanelAction({
-    id: "history",
+  app.slots.experimental_tab({
+    ...HISTORY_TAB,
     title: "Git History",
     icon: "FolderGit",
     component: GitHistoryPanel,
     layout: "flush",
   });
 
-  app.slots.experimental_threadHeaderAction({
-    id: "git-history",
-    title: "Git History",
-    component: GitHistoryHeaderAction,
-  });
+  app.slots.experimental_threadAction(gitHistoryHeaderAction);
 });
