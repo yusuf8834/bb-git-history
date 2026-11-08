@@ -227,6 +227,23 @@ describe("Git history app", () => {
     panel.lifecycle.unmount();
   });
 
+  it("selects the first repository without rendering the unavailable state", async () => {
+    const setAttribute = vi.spyOn(Element.prototype, "setAttribute");
+    const panel = renderSlot<HistoryTabProps, typeof rpcContract>(
+      historyTab(),
+      { threadId: "thread-1", environment: null, params: null },
+      { settings: {}, experimental_rpcContract: rpcContract, rpc: rpcHandlers() },
+    );
+
+    await panel.findByText("example-repo / main");
+    const renderedAlerts = setAttribute.mock.calls.filter(
+      ([name, value]) => name === "role" && value === "alert",
+    );
+    setAttribute.mockRestore();
+    expect(renderedAlerts).toEqual([]);
+    panel.lifecycle.unmount();
+  });
+
   it("scopes history, details, and patches to the selected repository", async () => {
     const repositories: RepositoryDescriptor[] = [
       { key: "repos/api", name: "API", currentBranch: "main", dirtyCount: 0 },

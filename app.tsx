@@ -69,6 +69,16 @@ function rememberRepository(threadId: string, repositoryKey: string | null): voi
   }
 }
 
+function initialRepositoryKey(
+  threadId: string,
+  repositories: readonly RepositoryDescriptor[],
+): string | null {
+  const remembered = rememberedRepository(threadId);
+  return repositories.find((repository) => repository.key === remembered)?.key
+    ?? repositories[0]?.key
+    ?? null;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Git history could not be loaded.";
 }
@@ -1160,20 +1170,19 @@ function GitHistoryPanel({ threadId }: { threadId: string }) {
     threadId: string;
     repositoryKey: string | null;
   } | null>(null);
-  const repositoryKey = selection?.threadId === threadId ? selection.repositoryKey : null;
+  const discoveredRepositories = discovery.data?.repositories;
+  const repositoryKey = selection?.threadId === threadId
+    ? selection.repositoryKey
+    : discoveredRepositories
+      ? initialRepositoryKey(threadId, discoveredRepositories)
+      : null;
 
   useEffect(() => {
     const discovered = discovery.data?.repositories;
     if (discovered === undefined) return;
     setSelection((current) => {
       if (current?.threadId !== threadId) {
-        const remembered = rememberedRepository(threadId);
-        return {
-          threadId,
-          repositoryKey: discovered.find((repository) => repository.key === remembered)?.key
-            ?? discovered[0]?.key
-            ?? null,
-        };
+        return { threadId, repositoryKey: initialRepositoryKey(threadId, discovered) };
       }
       if (
         current.repositoryKey
