@@ -2,6 +2,14 @@
 
 All notable changes to Git History are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- The commit graph column is sized to the branches on screen instead of every
+  loaded commit, so one wide stretch of history no longer pushes every commit
+  subject to the right.
+
 ## [0.4.4] - 2026-11-08
 
 ### Changed

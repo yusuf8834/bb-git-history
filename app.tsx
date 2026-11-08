@@ -483,17 +483,6 @@ function CommitList({
     () => experimentalGraph ? layoutCommitGraph(commits) : [],
     [commits, experimentalGraph],
   );
-  const maxLaneCount = graphRows.reduce(
-    (maximum, row) => Math.max(maximum, row.laneCount),
-    1,
-  );
-  const graphWidth = experimentalGraph
-    ? Math.min(GRAPH_MAX_WIDTH, GRAPH_WIDTH + (maxLaneCount - 1) * GRAPH_LANE_GAP)
-    : GRAPH_WIDTH;
-  const laneGap = maxLaneCount <= 1
-    ? 0
-    : Math.min(GRAPH_LANE_GAP, (graphWidth - GRAPH_WIDTH) / (maxLaneCount - 1));
-  const laneOffset = GRAPH_LANE_ORIGIN;
   const virtualizer = useVirtualizer({
     count: listItems.length,
     getScrollElement: () => scrollRef.current,
@@ -516,6 +505,22 @@ function CommitList({
   const lastVisibleIndex = virtualItems.at(-1)?.index ?? 0;
   const scrollOffset = virtualizer.scrollOffset ?? 0;
   const firstVisibleIndex = virtualItems.find((item) => item.end > scrollOffset)?.index ?? 0;
+  // Size the graph column to the lanes on screen, not every loaded commit, so
+  // one wide stretch of history does not push every subject to the right.
+  const viewportEnd = scrollOffset + (virtualizer.scrollRect?.height ?? Infinity);
+  const maxLaneCount = virtualItems.reduce((maximum, virtualItem) => {
+    const item = listItems[virtualItem.index];
+    if (item?.kind !== "commit") return maximum;
+    if (virtualItem.end <= scrollOffset || virtualItem.start >= viewportEnd) return maximum;
+    return Math.max(maximum, graphRows[item.commitIndex]?.laneCount ?? 1);
+  }, 1);
+  const graphWidth = experimentalGraph
+    ? Math.min(GRAPH_MAX_WIDTH, GRAPH_WIDTH + (maxLaneCount - 1) * GRAPH_LANE_GAP)
+    : GRAPH_WIDTH;
+  const laneGap = maxLaneCount <= 1
+    ? 0
+    : Math.min(GRAPH_LANE_GAP, (graphWidth - GRAPH_WIDTH) / (maxLaneCount - 1));
+  const laneOffset = GRAPH_LANE_ORIGIN;
   let activeDate: Extract<HistoryListItem, { kind: "date" }> | null = null;
   for (let index = firstVisibleIndex; index >= 0; index -= 1) {
     const item = listItems[index];
