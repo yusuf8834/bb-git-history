@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { experimental_runVcsProcess as runVcsProcess } from "@get-bb/plugin-sdk/host";
 import type { RepositoryDescriptor } from "./contracts";
 
 const MAX_GIT_OUTPUT_BYTES = 32 * 1024 * 1024;
@@ -18,6 +19,20 @@ export function runGit(
   args: string[],
   signal: AbortSignal,
   acceptedExitCodes: readonly number[] = [],
+): Promise<string> {
+  return runVcsProcess(
+    "git",
+    args,
+    () => execGit(cwd, args, signal, acceptedExitCodes),
+    { priority: "status", signal },
+  );
+}
+
+function execGit(
+  cwd: string,
+  args: string[],
+  signal: AbortSignal,
+  acceptedExitCodes: readonly number[],
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(

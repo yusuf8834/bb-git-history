@@ -2,6 +2,22 @@
 
 All notable changes to Git History are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Git History no longer polls every 15 seconds. The panel refreshes when bb
+  reports a change to the thread's environment (commits, branch changes, file
+  edits) or when a turn ends, and runs no git commands while nothing changes.
+  Working-tree edits refresh the panel at most once every 15 seconds.
+- Git commands run through bb's shared VCS process queue
+  (`experimental_runVcsProcess`) instead of spawning unmetered.
+- Register the panel with `experimental_tab` and the header shortcut with
+  `experimental_threadAction`, replacing the retired `threadPanelAction`,
+  `experimental_threadHeaderAction` and `openThreadPanel` APIs.
+- Require BB 0.48 or later and Plugin SDK 0.6.94 or later. The SDK is now a
+  runtime dependency because the host entry and frontend use it at runtime.
+
 ## [0.4.3] - 2026-10-02
 
 ### Added

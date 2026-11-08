@@ -1,9 +1,14 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   createFakePluginHost,
   makeThreadResponse,
 } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
-import type { HistoryPage } from "./contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { threadHistoryTag, type HistoryPage } from "./contracts";
+import {
+  URGENT_REFRESH_DELAY_MS,
+  WORK_STATUS_REFRESH_INTERVAL_MS,
+} from "./refresh-scheduler";
 import plugin from "./server";
 
 describe("Git history server", () => {
@@ -361,5 +366,123 @@ describe("Git history server", () => {
     expect(harness.inspection.experimental_hostRpcCalls).toEqual([]);
 
     await harness.lifecycle.dispose();
+  });
+
+  describe("refreshing watched history", () => {
+    type Subscription = Parameters<BbPluginApi["sdk"]["subscribe"]>[0];
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function watchedHistoryHarness() {
+      vi.useFakeTimers();
+      const subscriptions = new Set<Subscription>();
+      const environments: Record<string, string> = {
+        "thread-1": "environment-1",
+        "thread-2": "environment-2",
+      };
+      const fake = createFakePluginHost({
+        pluginId: "git-history",
+        sdk: {
+          threads: {
+            get: async ({ threadId }: { threadId: string }) =>
+              makeThreadResponse({
+                id: threadId,
+                projectId: "project-1",
+                environmentId: environments[threadId] ?? null,
+              }),
+          },
+          subscribe: (subscription: Subscription) => {
+            subscriptions.add(subscription);
+            return () => subscriptions.delete(subscription);
+          },
+        },
+      });
+      plugin(fake.bb);
+      const emit = async (
+        event: "thread:changed" | "environment:changed",
+        payload: object,
+      ) => {
+        for (const subscription of subscriptions) {
+          if (subscription.event !== event) continue;
+          (subscription.callback as (payload: object) => void)(payload);
+        }
+        await vi.advanceTimersByTimeAsync(URGENT_REFRESH_DELAY_MS);
+      };
+      const invalidations = () => fake.harness.inspection.experimental_rpcInvalidations;
+      return { fake, subscriptions, emit, invalidations };
+    }
+
+    it("invalidates a watched thread when its turn ends or its environment's refs change", async () => {
+      const { fake, emit, invalidations } = await watchedHistoryHarness();
+      fake.harness.experimental_watchRpc("historyRevision", {
+        input: { threadId: "thread-1", repositoryKey: "." },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await emit("thread:changed", {
+        id: "thread-1",
+        changes: ["status-changed"],
+        metadata: { statusChange: { status: "idle" } },
+      });
+      expect(invalidations()).toEqual([[threadHistoryTag("thread-1")]]);
+
+      await emit("environment:changed", { id: "environment-1", changes: ["git-refs-changed"] });
+      expect(invalidations()).toHaveLength(2);
+
+      await emit("thread:changed", {
+        id: "thread-2",
+        changes: ["status-changed"],
+        metadata: { statusChange: { status: "idle" } },
+      });
+      await emit("environment:changed", { id: "environment-2", changes: ["git-refs-changed"] });
+      await emit("thread:changed", {
+        id: "thread-1",
+        changes: ["status-changed"],
+        metadata: { statusChange: { status: "running" } },
+      });
+      expect(invalidations()).toHaveLength(2);
+      await fake.harness.lifecycle.dispose();
+    });
+
+    it("refreshes working-tree edits no more than once per interval", async () => {
+      const { fake, emit, invalidations } = await watchedHistoryHarness();
+      fake.harness.experimental_watchRpc("repositories", { input: { threadId: "thread-1" } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      for (let edit = 0; edit < 20; edit += 1) {
+        await emit("environment:changed", { id: "environment-1", changes: ["work-status-changed"] });
+      }
+      expect(invalidations()).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(WORK_STATUS_REFRESH_INTERVAL_MS);
+      expect(invalidations()).toHaveLength(2);
+      await fake.harness.lifecycle.dispose();
+    });
+
+    it("listens for changes only while a client watches", async () => {
+      const { fake, subscriptions, emit, invalidations } = await watchedHistoryHarness();
+      expect(subscriptions.size).toBe(0);
+
+      const stopRepositories = fake.harness.experimental_watchRpc("repositories", {
+        input: { threadId: "thread-1" },
+      });
+      const stopRevision = fake.harness.experimental_watchRpc("historyRevision", {
+        input: { threadId: "thread-1", repositoryKey: "." },
+      });
+      expect(subscriptions.size).toBe(2);
+      stopRepositories();
+      expect(subscriptions.size).toBe(2);
+      stopRevision();
+      expect(subscriptions.size).toBe(0);
+
+      await emit("environment:changed", { id: "environment-1", changes: ["git-refs-changed"] });
+      expect(invalidations()).toEqual([]);
+
+      fake.harness.experimental_watchRpc("repositories", { input: { threadId: "thread-1" } });
+      await fake.harness.lifecycle.dispose();
+      expect(subscriptions.size).toBe(0);
+    });
   });
 });

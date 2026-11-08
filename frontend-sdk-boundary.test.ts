@@ -47,7 +47,11 @@ function sdkImportersReachableFrom(entry: string): string[] {
 }
 
 describe("frontend bundle boundary", () => {
-  it("keeps the SDK root entry out of the app bundle", () => {
-    expect(sdkImportersReachableFrom("app.tsx")).toEqual([]);
+  it("installs the SDK at runtime when the app bundle imports its root entry", () => {
+    const { dependencies = {} } = JSON.parse(readFileSync("package.json", "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    const importers = sdkImportersReachableFrom("app.tsx");
+    expect(importers.length === 0 || SDK_ROOT_ENTRY in dependencies).toBe(true);
   });
 });

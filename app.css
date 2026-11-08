@@ -546,26 +546,6 @@
   overflow: auto;
 }
 
-.git-header-action {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-}
-
-.git-header-action:hover,
-.git-header-action:focus-visible {
-  outline: none;
-  background: var(--state-hover, color-mix(in oklab, var(--muted) 58%, transparent));
-  color: var(--foreground);
-}
-
 /* Dense history list */
 .git-history-panel {
   --gh-surface: var(--background);
@@ -1367,11 +1347,6 @@
 
 .git-diff-body > div:not(.git-detail-loading):not(.git-inline-error):not(.git-empty-files):not(.git-patch-note) {
   min-width: 100%;
-}
-
-.git-header-action svg {
-  width: 15px;
-  height: 15px;
 }
 
 @media (pointer: coarse) {

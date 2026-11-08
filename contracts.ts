@@ -111,6 +111,10 @@ const threadWorkingTreeInputSchema = threadRepositorySchema.extend({
     path: z.string().min(1).max(16_384),
   });
 
+export function threadHistoryTag(threadId: string): string {
+  return `thread-history:${threadId}`;
+}
+
 export const rpcContract = defineRpcContract({
   repositories: {
     input: z.object({ threadId: z.string().min(1) }).strict(),
@@ -118,6 +122,7 @@ export const rpcContract = defineRpcContract({
       repositories: z.array(repositoryDescriptorSchema),
       unavailableReason: z.string().nullable(),
     }).strict(),
+    tags: ({ threadId }) => [threadHistoryTag(threadId)],
   },
   history: {
     input: threadHistoryInputSchema,
@@ -126,6 +131,7 @@ export const rpcContract = defineRpcContract({
   historyRevision: {
     input: threadRepositorySchema,
     output: historyRevisionSchema,
+    tags: ({ threadId }) => [threadHistoryTag(threadId)],
   },
   details: {
     input: threadCommitInputSchema,
