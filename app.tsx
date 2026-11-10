@@ -11,9 +11,11 @@ import {
 import {
   definePluginApp,
   experimental_Diff as Diff,
+  experimental_useAppPanel as useAppPanel,
   experimental_useRpcQuery as useRpcQuery,
   useRpc,
   useSettings,
+  type PluginAppSlots,
   type PluginThreadActionRegistration,
 } from "@get-bb/plugin-sdk/app";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -1610,6 +1612,53 @@ export const gitHistoryHeaderAction: PluginThreadActionRegistration<boolean> = {
   },
 };
 
+export function GitHistoryHeaderButton() {
+  const panel = useAppPanel();
+  if (!useShowHeaderShortcut()) return null;
+
+  return (
+    <button
+      type="button"
+      className="git-header-action"
+      aria-label="Open Git history"
+      title="Open Git history"
+      onClick={() => {
+        const opened = panel.openTab({ tab: HISTORY_TAB, title: "Git History" });
+        if (!opened) toast.error("Git History could not open on this panel.");
+      }}
+    >
+      <Icon name="FolderGit" aria-hidden="true" />
+    </button>
+  );
+}
+
+// bb 0.48 still draws icon components in the thread header through this slot,
+// but SDK 0.6.104+ no longer types it. A bb without the slot gets the
+// labelled header thread action instead.
+type LegacyHeaderSlots = {
+  experimental_threadHeaderAction?(registration: {
+    id: string;
+    title: string;
+    component: typeof GitHistoryHeaderButton;
+  }): void;
+};
+
+export function registerHeaderShortcut(
+  slots: Pick<PluginAppSlots, "experimental_threadAction">,
+): "icon" | "labelled" {
+  const legacy = slots as unknown as LegacyHeaderSlots;
+  if (typeof legacy.experimental_threadHeaderAction === "function") {
+    legacy.experimental_threadHeaderAction({
+      id: "git-history",
+      title: "Git History",
+      component: GitHistoryHeaderButton,
+    });
+    return "icon";
+  }
+  slots.experimental_threadAction(gitHistoryHeaderAction);
+  return "labelled";
+}
+
 export default definePluginApp((app) => {
   app.slots.experimental_tab({
     ...HISTORY_TAB,
@@ -1619,5 +1668,5 @@ export default definePluginApp((app) => {
     layout: "flush",
   });
 
-  app.slots.experimental_threadAction(gitHistoryHeaderAction);
+  registerHeaderShortcut(app.slots);
 });

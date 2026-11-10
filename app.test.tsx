@@ -15,6 +15,7 @@ import type {
   PluginBrowserBbSdk,
 } from "@get-bb/plugin-sdk/app";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { GitHistoryHeaderButton, gitHistoryHeaderAction, registerHeaderShortcut } from "./app";
 import {
   rpcContract,
   threadHistoryTag,
@@ -153,11 +154,33 @@ beforeEach(() => {
 });
 
 describe("Git history app", () => {
-  it("registers the history tab and opt-in header action", () => {
+  it("registers the history tab and the icon header shortcut", () => {
     expect(app.tabs.map((tab) => [tab.id, tab.context, tab.availability])).toEqual([
       ["history", { kind: "thread" }, "action"],
     ]);
-    const headerAction = app.threadActions.find((action) => action.id === "git-history")!;
+    const legacy = app as unknown as {
+      threadHeaderActions: { id: string; title: string; component: unknown }[];
+    };
+    expect(legacy.threadHeaderActions).toEqual([
+      { id: "git-history", title: "Git History", component: GitHistoryHeaderButton },
+    ]);
+    expect(app.threadActions.some((action) => action.id === "git-history")).toBe(false);
+  });
+
+  it("falls back to the labelled header action when bb lacks the icon slot", () => {
+    const experimental_threadAction = vi.fn();
+    expect(registerHeaderShortcut({ experimental_threadAction })).toBe("labelled");
+    expect(experimental_threadAction).toHaveBeenCalledWith(gitHistoryHeaderAction);
+
+    const experimental_threadHeaderAction = vi.fn();
+    const slots = { experimental_threadAction: vi.fn(), experimental_threadHeaderAction };
+    expect(registerHeaderShortcut(slots)).toBe("icon");
+    expect(experimental_threadHeaderAction).toHaveBeenCalledOnce();
+    expect(slots.experimental_threadAction).not.toHaveBeenCalled();
+  });
+
+  it("opens the history tab from the labelled header action", () => {
+    const headerAction = gitHistoryHeaderAction;
     expect(headerAction.placement).toBe("header");
 
     const openTab = vi.fn<ExperimentalPanelController["openTab"]>(() => true);
@@ -176,6 +199,28 @@ describe("Git history app", () => {
       tab: { id: "history", context: { kind: "thread" }, availability: "action" },
       title: "Git History",
     });
+  });
+
+  it("shows the icon header button only with the shortcut setting on", () => {
+    const hidden = renderSlot({ component: GitHistoryHeaderButton }, {}, { settings: {} });
+    expect(hidden.queryByRole("button", { name: "Open Git history" })).toBeNull();
+    hidden.unmount();
+
+    const shown = renderSlot(
+      { component: GitHistoryHeaderButton },
+      {},
+      { settings: { showHeaderShortcut: true } },
+    );
+    fireEvent.click(shown.getByRole("button", { name: "Open Git history" }));
+    expect(shown.experimental_panelCalls).toEqual([
+      {
+        method: "openTab",
+        options: {
+          tab: { id: "history", context: { kind: "thread" }, availability: "action" },
+          title: "Git History",
+        },
+      },
+    ]);
   });
 
   it("renders default experimental lanes and expanded commit details", async () => {

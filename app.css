@@ -1732,3 +1732,30 @@
     display: none;
   }
 }
+
+/* Thread header shortcut */
+.git-header-action {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.git-header-action:hover,
+.git-header-action:focus-visible {
+  outline: none;
+  background: var(--state-hover, color-mix(in oklab, var(--muted) 58%, transparent));
+  color: var(--foreground);
+}
+
+.git-header-action svg {
+  width: 15px;
+  height: 15px;
+}
