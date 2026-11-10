@@ -2,7 +2,15 @@
 
 All notable changes to Git History are documented here.
 
-## [Unreleased]
+## [0.4.5] - 2026-11-10
+
+### Fixed
+
+- The thread header shortcut is an icon button again. Since 0.4.4 bb drew it
+  as a labelled "Git History" button; the plugin now registers its own icon
+  button through `experimental_threadHeaderAction`, which bb 0.48 still
+  renders, and falls back to the labelled header action on a bb without that
+  slot. `bb plugin build` warns that the slot is retired from SDK typings.
 
 ### Changed
 
